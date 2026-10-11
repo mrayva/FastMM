@@ -151,6 +151,7 @@ int data(int argc, char** argv) {
 
   if (analyze->parsed()) {
     std::vector<std::int64_t> horizons;
+    horizons.reserve(horizons_ms.size());
     for (const double h : horizons_ms) horizons.push_back(std::llround(h * 1e6));
     if (horizons.empty())
       horizons.assign(std::begin(bt::kDefaultMarkoutHorizonsNs),

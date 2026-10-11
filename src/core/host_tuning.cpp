@@ -247,6 +247,7 @@ std::vector<TopologyLine> topology_report(const TopologyInput& in) {
     return it->second;
   };
   std::vector<std::uint64_t> all_cores;
+  all_cores.reserve(in.cores.size());
   for (const auto& [cpu, core] : in.cores) all_cores.push_back(core);
   std::sort(all_cores.begin(), all_cores.end());
   all_cores.erase(std::unique(all_cores.begin(), all_cores.end()), all_cores.end());
