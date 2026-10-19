@@ -22,6 +22,8 @@ set of open-source trading repositories, with tests that pin the behaviour (see
 | `bench/open_loop.hpp` | Open-loop latency measurement from the *intended* send time (avoids coordinated omission) |
 | `vectors/itch5.hpp`, `vectors/moldudp64.hpp` | Hand-typed ITCH 5.0 / MoldUDP64 wire vectors with expected field values |
 
+See [docs/catalogue/](docs/catalogue/README.md) for the annotated reference of techniques these components came from.
+
 ## Build and test
 
 ```
