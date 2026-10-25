@@ -49,3 +49,40 @@
 
 ### Fixed-point numerics
 - **Where:** FastMM: distinct `Price`/`Qty`/`Notional` int64 types at 1e-8 so `p*q` does not compile, `mul_div` stays 64-bit when the product fits (avoiding `__divti3`, ~40 cycles), venue strings parsed as exact decimals. ITCH repo and roq-algo use `double`. **Verdict:** FastMM's is the one to copy.
+
+### Kernel state machine for permission to add risk
+- **Where:** raikiri `oms/kernel_gate.hpp` (concept only), a constexpr function from (state, event) to state.
+- **What:** Running, Degraded, Halted. A dropped execution record or a stalled gateway heartbeat degrades (and never promotes out of Halted); a lost gateway or a confirmed reconciliation failure halts; an agreeing reconciliation clears Degraded but only records the agreement when Halted; an operator resume is refused unless a reconciliation has agreed since the halt. Cancel is allowed in every state.
+- **Verdict:** adopt as a design. It is small enough to test exhaustively.
+
+### Reconciliation that needs a second boundary
+- **Where:** raikiri `oms/recon.hpp`.
+- **What:** the venue's position is compared with the book as of the venue's own timestamp, by rewinding fills booked after it (`book_as_of`). A first disagreement is only noted; it becomes a halt for that instrument when it is seen again at a different venue boundary. "Venue cannot report", "pull failed" and "venue reported zero" are three states, so a failed read is never taken as flat.
+- **Verdict:** adopt.
+
+### Risk gate as a pure function
+- **Where:** raikiri `oms/risk.hpp`: `check(cmd, exposure)` with no hidden state, so replay gives the same verdicts. Refuses on a reconciliation break first, then bad instrument, quantity, lot ceiling per market kind (a fat-finger backstop), limit price, a price band checked by cross-multiplying (tick counts truncate if divided first), post-only on a market order, open-order count, long and short limits (same-side working orders count as filled), and three notional limits (order, instrument, strategy; "unpriced exposure" refuses rather than guesses). Cancels never consult it. Compare Pulse-Order's divide-before-multiply notional cap and FastMM 0.7.0's through-zero fix. **Verdict:** adopt.
+
+### Rate budgets with cost, reserve and backoff
+- **Where:** raikiri `exec/rate_budget.hpp`, `common/sliding_log.hpp`.
+- **What:** a limit is a sliding log of (time, cost); `reserve` is a slice only order traffic may spend; a request carries a cost found by the longest matching path rule (a rule may require `?k=v` pairs in the query); it spends from every limit its path matches or from none; a venue refusal holds a limit (or all of them) for a backoff; limits are set near 90% of the venue's figure so a venue that counts fixed windows is also satisfied. Kinds beyond REST: websocket messages, connects per ip, streams per socket, sockets per ip, channels and subscriptions per frame.
+- **Caveats:** one mutex for the whole budget, because all clients share the per-ip allowance.
+- **Verdict:** adopt the model.
+
+### Venue clock as hard bounds
+- **Where:** raikiri `introspect/offset_bounds.hpp`, `clock_probe.hpp`.
+- **What:** the offset between a venue's clock and ours is kept as an interval, never a point. A REST probe gives bounds from the send and receive times; the feed gives a lower bound from the largest `ts_event − ts_recv` seen; intervals are intersected; the correction is the point nearest zero, so our clock is moved only as far as the bounds force. An empty intersection is reported as `Conflict`. A burst of probes is taken hourly (every minute after a failure). Lag is kept in a signed log-bucketed histogram (four buckets per power of two up to about 67 s) over a rolling minute.
+- **Verdict:** adopt for any feed with a venue timestamp.
+
+### Funding and fee accounting
+- **Where:** raikiri `oms/funding_split.hpp`, `funding_identity.hpp`, `fee_ledger.hpp`: a funding charge is split pro rata by current size, shares sum exactly to the charge (the remainder goes to the last holder, unheld charges to a manual book); a settlement's dedup key is packed instrument, settlement second and strategy, because the socket and the REST ledger mint different ids for the same charge; booked fees are held until the venue's ledger quotes them back and the verdict is agreed, disagreed or unmatched. **Verdict:** adopt.
+
+### Engine stall watchdog, notify units and log reopen
+- **Where:** upstream FastMM 0.9.0 (`read`): `[engine] stall_ms` (default 10,000) detects an engine thread that stops advancing its heartbeat and cancels all orders over REST on every venue, writes the kill and status files and exits 5 without joining the engine; a long stop of the whole process is not counted against the engine. `fastmm-live` and `fastmm-gateway` speak `sd_notify` (ready, watchdog, stopping) and the units are `Type=notify`; `SIGUSR1` and `fastmm-ctl log-reopen` reopen the log for logrotate; a shutdown waits for the venues' confirmations, not fixed sleeps; REST orders and cancels get their own connection so they never wait behind a snapshot; DNS lookups run on at most four shared threads off the pinned cores; each connection draws its own reconnect jitter; `max_loss_period = "utc_day"` makes `max_loss` a daily budget. **Verdict:** adopt as a checklist for a live process.
+
+### Credentials as references
+- **Where:** raikiri: credentials are passed as `env:NAME`, `file:/path`, `exec:command` or `op://vault/item/field`, never as values, since anything on a command line is visible to every user through `ps`. **Verdict:** adopt.
+
+### Process-per-venue isolation
+- **Where:** raikiri: one gateway process per (venue, market); a crashed or banned gateway takes nothing else down; the kernel reads every segment and keeps one book. The daemons do not pin to cores yet (README), and the 167 ns figure comes from an unpinned run.
+- **Verdict:** compare with FastMM's `fastmm-gateway`, which also separates exchange connections from strategy processes.

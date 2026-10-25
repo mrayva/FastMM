@@ -67,3 +67,40 @@
 ### Packed signed price (bids positive, asks negative)
 - **Where:** CppTrader "aggressive" benchmark variant.
 - **What:** One 32-bit value encodes side and price. Untested in FastMM. **Verdict:** try on the hottest path only if a profile shows a need.
+
+### Shared-memory segment header as a compatibility contract
+- **Where:** raikiri `libs/shm/segment.hpp` (LGPL-3.0, concept only).
+- **What:** a segment starts with a magic number, an ABI version, an FNV layout hash over the channel directory, creator pid, a generation number and a heartbeat. Channels are bump-allocated by the owner, each with a 16-byte name and size; `open_channel<T>` refuses a size mismatch, and a client of a different ABI or layout is refused instead of misreading. Thirty-two reader slots take a lease with one compare-exchange (claim count and pid packed together); the owner counts as dead if its pid is gone or its heartbeat is over 200 ms stale; a generation change means "drop cursors and reconcile".
+- **Evidence:** `read`. Compare with `ShmRing::open`, and with low-latency-event-engine's attach checks (section 4).
+- **Verdict:** adopt as a design checklist.
+
+### Race-free seqlock (payload as relaxed atomic words)
+- **Where:** raikiri `SeqlockCell` and `BroadcastRing` (concept only).
+- **What:** the payload is stored as an array of relaxed `atomic<uint64_t>` words between version stores, so the seqlock has no data race and needs no ThreadSanitizer fallback (FastMM's `Seqlocked<T>` falls back to a spinlock under TSan). The broadcast ring gives every slot its own version, so a lapped reader gets an exact `Overrun` and the count of items missed; its cursor then jumps to the head.
+- **Evidence:** `read`. The code requires `sizeof(T) % 8 == 0`.
+- **Caveats (found by reading, not run):** a reader loops forever if the writer dies mid-write (odd version); the 32-bit version wraps through 0, which readers treat as "never written", after 2^31 writes (about 24 days at 1,000 writes/s).
+- **FastMM:** has `Seqlocked<T>` and rings; the per-slot-version broadcast ring is the reliable-overrun answer that turboq's multicast lacks. **Verdict:** adapt.
+
+### Wrap-around via a payload offset in each message header
+- **Where:** turboq `SPSCMessageQueue` (MIT).
+- **What:** a variable-length byte ring where each message is a 64-byte header line plus a cache-line-aligned payload. If the payload does not fit before the end, the header is still written at the tail but its `payloadOffset` is 0 and the payload goes at the start of the ring. The consumer follows the offset, so the pointer is the wrap marker, no padding record is needed, and every payload is one contiguous span (zero copy).
+- **Caveats:** a minimum of 128 bytes per message (an 8-byte message costs two cache lines); a strict `<` is needed so equal positions never mean both full and empty.
+- **FastMM:** `MsgRing` writes a padding record at the wrap instead. **Verdict:** note as an alternative; the measured round trip is in the noise (section 7).
+
+### MPSC ring with reservation and publication as separate steps
+- **Where:** turboq `MPSCMessageQueue`.
+- **What:** fixed-size power-of-two slots; a CAS on `producerPos` reserves a slot, the producer writes it, then sets a `committed` flag kept in a separate slot-header array (flags do not share lines with payloads); the consumer clears the flag and then advances `consumerPos`.
+- **Caveats:** a producer that dies between the CAS and the commit stalls the consumer forever; there is no timeout or recovery. `prepare` throws if the message exceeds the slot size.
+- **Verdict:** adapt only with a stale-slot policy.
+
+### Reserved user region in the queue file
+- **Where:** turboq `Options::reserveSpace`: bytes right after the header, cache-line aligned, zero-filled at creation, recorded in the header and checked on open. New header fields went into former padding so old files still open. **Verdict:** note.
+
+### L3 window as a ring (FastMM 0.9.0)
+- **Where:** upstream FastMM `l3_book.hpp` (MIT).
+- **What:** tick `t` lives in slot `t mod window`, wherever the window starts, so moving the window moves no slot; a recentre only moves the levels that change sides between the window and the overflow store. A summary bitmap marks non-zero words (64 ticks per word, 4,096 per summary word). `clear()` costs what the book holds, not its capacity.
+- **Evidence:** `verified`; see section 2.
+
+### L2 snapshot load in O(levels); timer wheel generations
+- **Where:** upstream FastMM 0.9.0 (changelog and commits, `read`): a new level in a full side moves only the levels worse than it; a `TimerId` carries its slot generation so a stale id cannot cancel a reused slot; the wheel keeps eight slots for the engine's own timers so a strategy cannot starve a flatten; a callback that cancels the next timer no longer crashes the wheel.
+- **Verdict:** note; the wheel bugs are worth a regression test in any timer wheel.

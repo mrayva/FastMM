@@ -49,3 +49,17 @@
 
 ### Position tracker with split-at-zero
 - **Where:** roq-algo `PositionTracker`: a fill that flips a position is split at zero so realized P&L is booked on the closing part; `price_to_ticks` refuses precision loss. **Verdict:** adopt the two ideas.
+
+### Parameter A/B arms and branch backtests
+- **Where:** upstream FastMM 0.8.0–0.9.0 (`read`): `[ab]` runs parameter arms by instrument, time block or crossover, live and in backtests; every order carries its arm into the journal and store; `fastmm-data ab` compares arms with paired, resampled intervals and weighs each pair by the time it ran; `branch` assignment runs every arm over the same data and seed; sweep points, walk-forward folds and branch arms start from one strategy state and none writes its end state back.
+- **Verdict:** adopt as a design for strategy comparison without look-ahead or state leakage.
+
+### Resting-order fills when the recorded book trades through
+- **Where:** upstream FastMM 0.9.0 `sim` (`read`): under `l2_queue` an opposite level that arrives at or through a resting order fills it; post-only is checked against a book ticker newer than the depth; a reduce-only order is refused on a flat or growing position; a FOK under self-trade prevention fills whole or not at all; an inverse contract's entry is the harmonic mean of its fills; a spot market buy is held at the levels it would take. These are venue behaviours a simulated account has to reproduce, listed as fixes.
+- **Verdict:** use as a checklist for any simulated venue.
+
+### Execution algorithms as a state machine over parent and child orders
+- **Where:** raikiri `libs/joe` (concept only).
+- **What:** a parent goes pending → working → done / cancelled / failed (working ↔ paused); a fill is booked in any state, so one landing after a cancel still counts; an overfill reads as zero leaves, never negative. TWAP, a U-shaped weight (`1 + 2(2x−1)²` at each slice midpoint), a VWAP weight from a 48-bucket (half-hour) volume curve, and POV. Slice times are jittered by a seed, so a parent's schedule is identical on every call. The cumulative target makes the last slice land exactly on the total, and a shortfall is caught up only to a percentage of the planned slice until the last. The smart order router splits a quantity across venue books by price after taker fee, in whole lots, with each leg clearing the venue's minimum notional and an IOC limit at the deepest level it reaches.
+- **Evidence:** `read`; pure functions, easy to test.
+- **Verdict:** reimplement if FastMM needs parent-order execution.

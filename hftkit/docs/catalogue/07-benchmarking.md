@@ -47,3 +47,26 @@ Book state identical on all 2,475 symbols at 1M messages. The slow tail is the r
 
 ### Reproducing someone else's number
 - ultra-low-latency-orderbook: claimed 5.93 ns/op but the benchmark source is absent. submicro: injected `busy_wait_ns` and a 400 ns software "FPGA". These are the cases where the right response is to ignore the figure.
+
+### Re-measured with FastMM 0.9.0 (this project, 2026-10-25)
+`verified`, same machine, same harness and same `sample.itch` as the table above.
+
+| | f76e871 (first analysed) | 0.9.0 |
+|---|---:|---:|
+| bridge, whole 1,563,071-message slice | 722–758 ns/msg | 64–82 ns/msg |
+| recentres | 9,829 | 2,911 |
+| first 1,000,000 messages | 76–89 ns/msg | 65 ns/msg |
+| per-symbol best bid/ask/order count | reference | identical after 1M and after the full slice |
+
+Three runs of the new build were taken; the old build twice. The tens-of-percent variation of this shared VM still applies, but the change is about 10×.
+
+### Two-thread ping-pong across three SPSC rings
+`verified` and weak evidence: 8-byte messages, in-process, cores 0 and 1 of a shared 4-vCPU VM, 200,000 round trips after 20,000 warm-up, three repetitions. Round-trip p50 (ns):
+
+| | raikiri `SpscRing` | FastMM `SpscRing` | turboq SPSC |
+|---|---:|---:|---:|
+| run 1 | 525 | 398 | 530 |
+| run 2 | 500 | 395 | 558 |
+| run 3 (noisy) | 561 | 1,160 | 505 |
+
+The ordering flipped in the third run, so no ranking is claimed; cross-core cache-line transfer dominates all three. raikiri's own `shm_pingpong` (cross-process, unpinned here) gave p50 1,006 / 462 / 414 ns over three runs against its published 167 ns on an M-series laptop. turboq publishes no figures and says unpinned virtualised numbers are meaningless; its `latency_bench` runs a producer and a consumer as separate processes.

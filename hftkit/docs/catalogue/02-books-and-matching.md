@@ -4,8 +4,9 @@
 - **Where:** FastMM `L3Book` (MIT).
 - **What:** Prices near the market index a tick window (price→level is one subtraction); a bitmap per side finds the next level; outliers go to a sorted overflow store; the window recentres on the midpoint. Orders sit in a pool with an intrusive FIFO per level and an open-addressing index.
 - **Evidence:** `verified`: book state matched CppTrader's `MarketManager` on all 2,475 symbols after 1,000,000 messages of `sample.itch`, 56,090 live orders, 0 book errors.
-- **Caveats:** `verified` weakness: recentre cost is linear in the window. During the 12:00:00 mass cancel AAPL recentred 48 times at the default 2^16 window (~225 µs each; ~11 µs at 2^12, ~60 µs at 2^14, ~800 µs at 2^18), which made the last 63k messages 15–25× slower. Setting the tick to $0.01 fixed AAPL but gave 22 book errors across the top 100 symbols (sub-penny orders). Docs call recentres rare; for equities at $0.0001 that is not true during bursts.
-- **Verdict:** FastMM's own; mitigation (hysteresis or cheaper shift) is open work.
+- **Caveats:** `verified` weakness in the version I first analysed (f76e871): recentre cost was linear in the window. During the 12:00:00 mass cancel AAPL recentred 48 times at the default 2^16 window (~225 µs each; ~11 µs at 2^12, ~60 µs at 2^14, ~800 µs at 2^18), which made the last 63k messages 15–25× slower. Setting the tick to $0.01 fixed AAPL but gave 22 book errors across the top 100 symbols (sub-penny orders).
+- **Fixed in 0.9.0 (`verified`):** the window is now a ring and a recentre waits until the touch has traded outside it (below). Same file, same harness: whole-slice cost 722–758 → 64–82 ns/message, recentres 9,829 → 2,911, and per-symbol best bid, best ask and order count are byte-identical to the old build after 1,000,000 and after all 1,563,071 messages, with 0 book errors.
+- **Verdict:** FastMM's own; the mitigation I proposed (hysteresis and a cheaper shift) is what 0.9.0 did.
 
 ### Flat direct-indexed book
 - **Where:** order-matching-engine, orderer-cpp, kaspar `TachBook` (flat `uint[262144]` array by tick).
@@ -53,3 +54,13 @@
 ### Cross handling
 - **Where:** kaspar `UNCROSS_BOOK`/`OB::add` cancel contra orders the aggressor crossed; slick-orderbook and others do not handle crossed books.
 - **Verdict:** adopt as a defined policy when consuming a feed that may transiently cross.
+
+### Deferred recentre as a cost-benefit rule
+- **Where:** upstream FastMM 0.9.0 `note_touch_out()`.
+- **What:** when a side's best level is outside the window, the overflow store serves that touch until it has handled about as many operations as the move would cost; then the window moves onto the midpoint of the two touches (or onto the touch of a one-sided book). Touches further apart than the window keep the window where it is, so a stub-only side does not pull it back and forth. A failed recentre is counted (`recentre_failures()`) and retried; the book stays correct, only slower. `recentre_levels_moved()` counts the work. Documented costs: in-window add/execute/cancel/replace O(1); overflow-store operations a binary search plus a memmove.
+- **Evidence:** `verified` end to end on `sample.itch` (above); the 2,911 remaining recentres are the real cost of the mass cancel.
+- **Verdict:** the reference for any windowed book.
+
+### Sorted-vector ladder, best at the front
+- **Where:** raikiri `book::Ladder` (concept only): a `std::vector<Level>` kept sorted so the touch is element 0, with `upsert`, `remove`, `truncate(depth)` and `drop_beyond(worst)`; `snapshot()` returns nothing for a one-sided or untrusted book. `vector::insert` may reallocate unless `reserve` is called.
+- **FastMM:** keeps the best at the back, so near-touch inserts shift few entries. **Verdict:** ignore the layout, keep "an untrusted book publishes as nothing".

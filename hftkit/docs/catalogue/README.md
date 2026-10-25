@@ -26,6 +26,8 @@ code that came out of it is in `../../include/hftkit` (see `../PROVENANCE.md`).
 7. [Benchmarking and measurement](07-benchmarking.md)
 8. [Operations and strategy](08-operations-and-strategy.md)
 
+Updated 2026-10-25: raikiri and turboq entries added, FastMM 0.8.0–0.9.0 changes folded into sections 1, 2, 4, 5 and 7.
+
 ## Repositories covered, and what may be copied
 
 Licences are as recorded during the original analyses (README or LICENSE file at the time).
@@ -33,7 +35,7 @@ Check the upstream repository before copying anything.
 
 | Repo | Role | Licence | Copy? |
 |---|---|---|---|
-| FastMM | full market-making engine | MIT | with notice |
+| FastMM | full market-making engine (upstream 0.9.0 re-reviewed 2026-10-25) | MIT | with notice |
 | kaspar-hft | CME stack and simulator | MIT | with notice |
 | roq-algo | strategy/matcher interfaces | BSD-3 | with notice |
 | matching-engine-benchmark | cross-engine benchmark and oracle | MIT | with notice |
@@ -47,6 +49,8 @@ Check the upstream repository before copying anything.
 | orderer-cpp | partitioned pipeline | MIT or Apache-2.0 | with notice |
 | revoq | mmap IPC journal | Apache-2.0 | with notice |
 | slick-orderbook | L2/L3 library | MIT | with notice |
+| raikiri | multi-process crypto trading framework | LGPL-3.0 | **no** into MIT code (reimplement from the idea) |
+| turboq | shared-memory SPSC/MPSC/multicast queues | MIT | with notice |
 | ultra-low-latency-orderbook | fixed L2 book | none found | **no** |
 | lob-engine | single-symbol LOB | none found | **no** |
 | udp-multicast-receiver | MoldUDP64 receiver | none found | **no** |
@@ -70,6 +74,9 @@ Claims that did not survive reading, or that I could not check.
 | udp-multicast-receiver | "production-grade" | Synthetic data, five opcodes, no real capture; decoder first had the wrong ITCH layout and passed 202 assertions. |
 | Limit-Order-Book | rebalance is O(log M) | `getLimitHeight` walks the subtree; measured ~2.5 µs per rebalance. |
 | LruClockCache | working write-back cache | Key 0 is lost while unused slots are consumed (reproduced). |
+| raikiri | 167 ns cross-process p50, "43 live venues", "23 with order entry" | 167 ns is an M-series laptop; I measured 414–1,006 ns p50 on a shared 4-vCPU VM (not comparable). The docs say 24 order-entry venues in one place and 23 in another; 20 of the 43 are market-data only; the README says not every order path has run on a real account. |
+| turboq | lock-free multicast | Documents that a lapped consumer may read skipped, torn or garbage messages; publishes no numbers. |
+| FastMM (my earlier finding) | recentre cost grows with window | Fixed upstream in 0.9.0; re-measured (section 2). |
 | Pulse-Order | (none) | Scope and exclusions are stated honestly; used as the model for measurement hygiene. |
 | lob-engine | (none contradicted) | Numbers not reproduced; its 18-bug ledger is the useful part. |
 | revoq, low-latency-event-engine, CppTrader, kaspar | published numbers | Not reproduced, except CppTrader's parser/book which I re-ran (section 7). |
